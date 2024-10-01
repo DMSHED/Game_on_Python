@@ -1,8 +1,13 @@
+import random
+
 import pygame
 
 from Bullet import Bullet
 from Invander import Invander
 from Player import Player
+from Bomb import Bomb
+from Lives import Lives
+from Message import Message
 
 pygame.init()
 
@@ -50,8 +55,6 @@ player_hit_sound = pygame.mixer.Sound('sounds/2.wav')
 alien_movement = pygame.mixer.Sound('sounds/6.wav')
 alien_movement2 = pygame.mixer.Sound('sounds/7.wav')
 player_dying = pygame.mixer.Sound('sounds/5.wav')
-saucer_sound = pygame.mixer.Sound('sounds/8.wav')
-saucer_dying = pygame.mixer.Sound('sounds/3.wav')
 
 # Создаем иконку
 icon = pygame.image.load("icon.png")
@@ -63,6 +66,13 @@ backgr = pygame.transform.scale(backgr, (window_width, window_height))
 # Настройки спрайтов
 player = Player('man', 30, 600)
 bullet = Bullet(0, 0, 3, 15, .1)
+# Жизни
+lives_indicator = Lives(window_width=window_width)
+# message
+game_over_message = Message('Game Over', window_width/2 - 80, window_height/2)
+play_again_message = Message('Play again? (y/n)', window_width/2 - 100, window_height/2 + 60)
+
+
 
 # фиксируем нажатие клавиш
 def process_events():
@@ -105,10 +115,6 @@ def handle_bullet(bullet, bullet_active):
         bullet_active = False
         bullet.position = (0, 0)
 
-    # if (handle_saucer_hit(bullet_x, bullet_y)):
-    #     bullet_active = False
-    #     bullet.position = (0, 0)
-
     if (bullet_y < 0):
         bullet_active = False
 
@@ -124,6 +130,73 @@ def create_aliens():
             alien = Invander(alien_names[i], alien_names[i] + 'c', 30 + (j * 60), 100 + i*60, alien_group, score_dict[alien_names[i]], level)
             alien_group.add(alien)
         alien_groups.append(alien_group)
+
+
+def handle_game_over():
+    global game_over
+    game_over = True
+
+
+def handle_player_hit(bomb_x, bomb_y):
+    global gems_collected, player_score, bullet, alien_groups, player_lives, lives_indicator
+    (x, y) = player.position
+    if bomb_x > x and bomb_x < x + player.get_width() and \
+            bomb_y > y and bomb_y < y + player.get_height() \
+            and player.dead == False:
+        player.kill()
+        player.death_time = pygame.time.get_ticks()
+        player_hit_sound.play()
+        player_lives = player_lives - 1
+        lives_indicator.update_lives(player_lives)
+        lives_indicator.draw(window)
+        if (player_lives == 0):
+            handle_game_over()
+        return True
+    return False
+
+active_bombs = []
+bomb_frequency = 5
+
+def check_for_bomb_activation():
+     global game_time, active_bombs, alien_groups, bomb_frequency
+     if (game_time/1000 % 2 == 0):
+        if len(alien_groups) <= 0: return
+
+        # ищем всех пришельцев, способных атаковать
+        bombing_aliens =  [alien for alien_group in alien_groups for alien in alien_group.sprites()]
+        for alien in bombing_aliens:
+            if (alien.bomb_active == False):
+                activate_bomb = random.randint(0, 100) < bomb_frequency
+                if activate_bomb and alien.bomb_active == False:
+                    alien.bomb_active = True
+                    newestBomb = Bomb( 0, 0, 5, 15, .03, alien)
+                    newestBomb.position = (alien.position[0] + alien.get_width()/2,
+                                           alien.position[1] + alien.get_height())
+                    active_bombs.append(newestBomb)
+
+
+def handle_active_bombs(active_bombs):
+    bombs_to_remove = []
+    for bomb in active_bombs:
+        (bomb_x, bomb_y) = bomb.position
+        bomb_y = bomb_y + bomb.speed
+        bomb.position = (bomb_x, bomb_y)
+        bomb.update()
+        bomb.draw(window)
+        if (bomb_y > window_height):
+            bomb.parent.bomb_active = False
+            bomb.position = (0, 0)
+            bombs_to_remove.append(bomb)
+        if (handle_player_hit(bomb_x, bomb_y)):
+            bomb.parent.bomb_active = False
+            bomb.position = (0, 0)
+            bombs_to_remove.append(bomb)
+
+    if (len(bombs_to_remove) > 0):
+        if (len(active_bombs) > 0):
+            for bomb in bombs_to_remove:
+                active_bombs.remove(bomb)
+
 
 def initialize_game_state():
     global player_score, start_time, game_over, \
@@ -317,12 +390,27 @@ def handle_alien_movement():
 
     move_aliens_down = False
 
+
+def show_game_over_prompt():
+    global game_over
+    game_over = True
+    game_over_message.draw(window)
+    play_again_message.draw(window)
+
+
 while running:
     (player_x, player_y) = player.position
     # window.fill(BLACK)
     window.blit(backgr, (0,0))
+    # Выведем на экран количество жизней
+    lives_indicator.draw(window)
 
     running = process_events()
+
+    if (game_over):
+        show_game_over_prompt()
+        pygame.display.flip()
+        continue
 
     # переместить игрока
     handle_player_movement(window_width, player_left, player_right, player, player_x)
@@ -334,8 +422,18 @@ while running:
     if bullet_active:
         bullet_active = handle_bullet(bullet, bullet_active)
 
+
+    # check for bomb activation every 2 seconds
+    check_for_bomb_activation()
+
+    # update active bombs
+    handle_active_bombs(active_bombs)
+
     # рисуем пришельца и проверяем, убили ли его
     draw_aliens(window, alien_groups)
 
     # обновить дисплей
     pygame.display.flip()
+    # обновить время игры
+    game_time = pygame.time.get_ticks() - start_time
+
